@@ -1,10 +1,10 @@
 #!r6rs
-(import (rnrs io simple (6))
+(import
+  (rnrs base (6))
+  (rnrs io ports (6))
   (utility))
 
-
-
-;; CORE 
+; CORE 
 
 (define (evaluate exp env)
   (cond 
@@ -13,14 +13,21 @@
     ((quoted? exp) (text-of-quotation exp))
     ((assignment? exp) (eval-assignment exp env))
     ((definition? exp) (eval-definition exp env))
+    ((breakpoint? exp) (eval-breakpoint env))
     ((if? exp) (eval-if exp env))
     ((lambda? exp)
      (make-procedure (lambda-parameters exp)
                      (lambda-body exp)
                      env))
+    ((load? exp)
+     (load-file-into-env (load-file exp) env))
+    ((load-expr? exp)
+     (load-expr-into-env (load-expr exp) env))
     ((begin? exp) 
      (eval-sequence (begin-actions exp) env))
     ((cond? exp) (evaluate (cond->if exp) env))
+    ((partial-application? exp)
+     (make-partial-application exp env))
     ((application? exp)
      (mc-apply (evaluate (operator exp) env)
             (list-of-values (operands exp) env)))
@@ -168,6 +175,102 @@
 
 (define (make-begin seq) (cons 'begin seq))
 
+
+
+;; PARTIAL APPLICATION CODE ------
+(define (contains? seq elem)
+  (if (null? seq)
+      #f
+      (if (eq? (car seq) elem)
+          #t
+          (contains? (cdr seq) elem))))
+
+(define (make-arg-name pos) 
+    (string->symbol
+      (string-append "__arg" (number->string pos))))
+
+(define (make-actual-args args)
+  (map
+    (lambda (arg)
+            (if (equal? (cadr arg) '_)
+                (make-arg-name (car arg))
+                (cadr arg)))
+    (enumerate args)))
+
+(define (make-formal-args args)
+  (map
+    (lambda (arg)
+            (make-arg-name (car arg)))
+    (filter
+      (lambda (arg)
+              (equal? (cadr arg) '_))
+      (enumerate args))))
+
+(define (partial-application? exp) (and (pair? exp) (contains? exp '_)))
+(define (partial-application-proc exp) (car exp))
+(define (partial-application-actual-args exp) (make-actual-args (cdr exp)))
+(define (partial-application-formal-args exp) (make-formal-args (cdr exp)))
+(define (partial-application-body exp) (list (cons (partial-application-proc exp) (partial-application-actual-args exp)))) ; since compound proc can have multiple lines we have to put this single line into a list
+(define (make-partial-application exp env)
+   (make-procedure (partial-application-formal-args exp) (partial-application-body exp) env))
+; -------------------------------------
+
+
+;;load file code ---------------------
+(define (load-file-into-env path env)
+  (call-with-input-file path
+    (lambda (in)
+      (define (loop)
+        (let ((expr (read in)))
+          (if (eof-object? expr)
+              'done
+              (begin
+                (evaluate expr env)
+                (loop)))))
+      (loop))))
+
+(define (load? exp) (tagged-list? exp 'load))
+(define (load-file exp) (cadr exp))
+;------------------------------------
+
+
+;; load expr into code -------------
+(define (load-expr-into-env expr env)
+  (evaluate expr env))
+(define (load-expr? expr) (tagged-list? expr 'load-expr))
+(define (load-expr expr) (text-of-quotation (cadr expr)))
+;-----------------------------------
+
+;; breakpoint logic -----------------
+
+(define (breakpoint? expr) (tagged-list? expr 'breakpoint))
+(define (eval-breakpoint env)
+  (display "\n\nBreakpoint hit.\n 0: Query variable value\n 1: Evaluate expression\n 2: Continue\n > ")
+  (let ((input (read)))  
+        (cond ((= input 0)
+                (query-variable env))
+               ((= input 1)
+                (breakpoint-eval env))
+               ((= input 2)
+                'continue)
+               (else
+                 (error "Invalid input" input))
+               )))
+
+(define (query-variable env)
+  (display "\n\nEnter variable name: ")
+  (let ((input (read)))
+    (begin
+      (user-print (lookup-variable-value input env))
+      (eval-breakpoint env))))
+(define (breakpoint-eval env)
+  (display "\n\nEnter expression: ")
+  (let ((input (read)))
+    (begin
+      (user-print (evaluate input env))
+      (newline)
+      (eval-breakpoint env))))
+
 (define (application? exp) (pair? exp))
 (define (operator exp) (car exp))
 (define (operands exp) (cdr exp))
@@ -253,7 +356,7 @@
              (car vals))
             (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-environment)
-        (error "Unbound variable" var)1
+        (error "Unbound variable" var)
         (let ((frame (first-frame env)))
           (scan (frame-variables frame)
                 (frame-values frame)))))
@@ -303,6 +406,8 @@
 
 (define (primitive-implementation proc) (cadr proc))
 
+
+
 (define primitive-procedures
   (list (list 'car car)
         (list 'cdr cdr)
@@ -313,6 +418,10 @@
         (list '- -)
         (list '* *)
         (list '/ /)
+        (list '< <)
+        (list '> >)
+        (list 'display display)
+        (list 'newline newline)
         ;; more primitives
         ))
 
@@ -333,8 +442,8 @@
 ;; INPUT LOOP
 
 
-(define input-prompt ";;; M-Eval input:")
-(define output-prompt ";;; M-Eval value:")
+(define input-prompt "M-Eval input:")
+(define output-prompt "M-Eval value:")
 
 (define (driver-loop)
   (prompt-for-input input-prompt)
