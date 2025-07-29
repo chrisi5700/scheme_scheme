@@ -100,3 +100,14 @@
       (newline))
     (display "fix the code"))
 (newline)
+
+
+(display "example of pattern matching with cond")
+(cond
+    ((case (0 0) (2 3))
+     (display "false"))
+    ((case (val var) (1 2))
+     (display "var = ")
+     (display var))
+    ((case (1 2 val) (1 2 1))
+     (display "true but unreachable"))) 
