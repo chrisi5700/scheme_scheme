@@ -1,6 +1,6 @@
 #!r6rs
 (library (utility)
-  (export iota zip enumerate file->string)
+  (export all iota zip enumerate file->string)
   (import (rnrs base (6))
           (rnrs io ports (6))
           (rnrs io simple (6)))
@@ -20,6 +20,10 @@
   (define (enumerate lst)
     (zip (iota (length lst)) lst))
 
+  (define (all lst)
+    (if (null? lst)
+        #t
+        (and (car lst) (all (cdr lst)))))
   
   (define (file->string path)
     (call-with-input-file path

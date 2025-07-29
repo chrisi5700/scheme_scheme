@@ -12,6 +12,7 @@
     ((variable? exp) (lookup-variable-value exp env))
     ((quoted? exp) (text-of-quotation exp))
     ((assignment? exp) (eval-assignment exp env))
+    ((case? exp) (eval-case exp env))
     ((definition? exp) (eval-definition exp env))
     ((breakpoint? exp) (eval-breakpoint env))
     ((if? exp) (eval-if exp env))
@@ -81,7 +82,34 @@
   'ok)
 
 
-; Todo eval cond
+(define (eval-case exp env)
+  (let ((eval-rhs (map (lambda (e) (evaluate e env)) (case-rhs exp))))
+        (if (case-equal? (case-lhs exp) eval-rhs env)
+            (case-assign-variables (case-lhs exp) eval-rhs env)
+            #f)))
+
+(define (case-equal? lhs rhs env)
+  (newline)
+  (all (map (lambda (comp)
+               (cond
+                 ((not (variable? (car comp))) ; an expression -> check if its equal to whats on the rhs
+                  (equal? (evaluate (car comp) env) (cadr comp)))
+                 ((try-lookup-variable-value (car comp) env) ; some defined variable -> compare them if they are equal 
+                  (equal? (lookup-variable-value (car comp) env) (cadr comp)))
+                 (else #t))) ; a not yet defined variable -> a placeholder which will match anything
+       (zip lhs rhs)))) ; every condition matched in case -> case gets matched duh
+
+
+(define (case-assign-variables lhs rhs env)
+  (map (lambda (pair)
+               (cond
+                 ((not (variable? (car pair)))
+                  'ok)
+                 ((not (try-lookup-variable-value (car pair) env))
+                  (define-variable! (car pair) (cadr pair) env))
+                 (else 'ok)))
+       (zip lhs rhs))
+  #t)
 
 ;; EXPRESSIONS 
 
@@ -135,6 +163,20 @@
       (caddr exp)
       (make-lambda (cdadr exp)
                    (cddr exp))))
+
+; (define val 1)
+; (case (val other-val) (1 2)) -> #t + other-val = 2
+; (case (1) (val) -> #t
+; (case (val val) (1 2)) -> #f
+; (case (val other-val) (1 2)) -> #f  
+
+(define (case? exp)
+  (tagged-list? exp 'case))
+(define (case-rhs exp) (caddr exp))
+(define (case-lhs exp) (cadr exp))
+
+
+
 
 (define (lambda? exp) (tagged-list? exp 'lambda))
 
@@ -321,7 +363,6 @@
 (define (procedure-environment p) (cadddr p))
 
 
-
 ;; ENVIRONMENT 
 
 (define (enclosing-environment env) (cdr env))
@@ -357,6 +398,21 @@
             (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-environment)
         (error "Unbound variable" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (env-loop env))
+
+(define (try-lookup-variable-value var env)
+  (define (env-loop env)
+    (define (scan vars vals)
+      (cond ((null? vars)
+             (env-loop (enclosing-environment env)))
+            ((eq? var (car vars))
+             (car vals))
+            (else (scan (cdr vars) (cdr vals)))))
+    (if (eq? env the-empty-environment)
+        #f ; instead of erroring just report that the variable doesnt exist
         (let ((frame (first-frame env)))
           (scan (frame-variables frame)
                 (frame-values frame)))))
@@ -413,6 +469,9 @@
         (list 'cdr cdr)
         (list 'cons cons)
         (list 'null? null?)
+        (list 'eq? eq?)
+        (list 'equal? equal?)
+        
         ; Arithmetic
         (list '+ +)
         (list '- -)
@@ -420,8 +479,11 @@
         (list '/ /)
         (list '< <)
         (list '> >)
+        (list '= =)
+
         (list 'display display)
         (list 'newline newline)
+        (list 'error error)
         ;; more primitives
         ))
 
@@ -470,4 +532,5 @@
 
 (define the-global-environment (setup-environment))
 
+(evaluate '(load "showcase.scm") the-global-environment)
 (driver-loop)
